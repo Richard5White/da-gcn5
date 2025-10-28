@@ -157,11 +157,9 @@ class DAGCN(nn.Module):
         # 用于对比学习的增强视图
         aug_embeddings = {}
         if with_augmentation:
-            # 通过dropout创建嵌入的不同视图，确保随机掩码在当前设备上生成
+            # 通过dropout创建嵌入的不同视图
             drop_rate = 0.2
-            # 关键修复：使用设备上的随机数生成器
-            mask = torch.rand(last_embedding.shape[0], 1, device=self.device) > drop_rate
-            aug_last_embedding = last_embedding * mask.float()
+            aug_last_embedding = F.dropout(last_embedding, p=drop_rate, training=self.training)
             aug_embeddings['all'] = aug_last_embedding
 
         for post_beh in self.behaviors:
@@ -174,23 +172,23 @@ class DAGCN(nn.Module):
 
             for pre_beh in pre_behaviors:
                 # 获取前置行为的嵌入并应用行为感知调整
-                pre_embedding = all_embeddings[pre_beh].to(self.device)  # 确保设备一致
+                pre_embedding = all_embeddings[pre_beh]
                 # 核心优化：根据前置行为类型动态调整嵌入
                 attn_weights = self.behavior_attn[pre_beh](pre_embedding)
                 scaled_pre_emb = pre_embedding * attn_weights + self.behavior_bias[pre_beh]
 
                 # GCN传播（使用调整后的嵌入）
-                layer_adj = self.behavior_adjs[post_beh].to(self.device)  # 确保邻接矩阵在设备上
+                layer_adj = self.behavior_adjs[post_beh].to(self.device)
                 lightgcn_emb = self.behavior_cf[post_beh][pre_beh](scaled_pre_emb, layer_adj, self.keep_rate)
-                trans_mat = self.personal_trans_dict[post_beh][pre_beh].to(self.device)  # 确保转换矩阵在设备上
+                trans_mat = self.personal_trans_dict[post_beh][pre_beh].to(self.device)
                 post_embedding = torch.mul(trans_mat, lightgcn_emb)
                 post_embeddings.append(post_embedding)
 
                 # 增强视图的传播
                 if with_augmentation:
-                    aug_pre_embedding = aug_embeddings[pre_beh].to(self.device)
+                    aug_pre_embedding = aug_embeddings[pre_beh]
                     aug_lightgcn_emb = self.behavior_cf[post_beh][pre_beh](
-                        aug_pre_embedding, layer_adj, self.keep_rate * 0.8)
+                        aug_pre_embedding, layer_adj, self.keep_rate * 0.8)  # 不同的keep_rate增强差异
                     aug_post_emb = torch.mul(trans_mat, aug_lightgcn_emb)
                     aug_post_embeddings.append(aug_post_emb)
 
